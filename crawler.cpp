@@ -30,16 +30,14 @@
 
 using namespace std;
 
-// Configuration structure with default values and validation
 struct Config {
-    int crawlDelay = 1000;        // Default delay between requests: 1 second
-    int maxThreads = 10;          // Default maximum concurrent threads
-    int depthLimit = 10;          // Default maximum crawling depth
-    int pagesLimit = 10;          // Default maximum pages per site
-    int linkedSitesLimit = 10;    // Default maximum linked sites to discover
-    LinkedList startUrls;         // Starting URLs for crawling
+    int crawlDelay = 1000;
+    int maxThreads = 10;
+    int depthLimit = 10;
+    int pagesLimit = 10;
+    int linkedSitesLimit = 10;
+    LinkedList startUrls;
 
-    // Validates configuration values
     void validate() const {
         if (crawlDelay < 0) throw runtime_error("Crawl delay cannot be negative");
         if (maxThreads <= 0) throw runtime_error("Max threads must be positive");
@@ -50,17 +48,15 @@ struct Config {
     }
 };
 
-// Crawler state management with thread safety
 struct CrawlerState {
-    int threadsCount{0};              // Active thread count
-    LinkedList pendingSites;          // Sites waiting to be crawled
-    map<string, bool> discoveredSites;// Track discovered sites
-    mutex stateMutex;                 // Mutex for thread-safe state access
-    condition_variable stateChanged;   // Condition for state changes
-    bool isFinished{false};           // Indicates crawling completion
+    int threadsCount{0};
+    LinkedList pendingSites;
+    map<string, bool> discoveredSites;
+    mutex stateMutex;
+    condition_variable stateChanged;
+    bool isFinished{false};
 };
 
-// RAII wrapper for thread management
 class ThreadGuard {
     CrawlerState& state;
     mutex& mtx;
@@ -77,35 +73,36 @@ public:
     }
 };
 
-// Global configuration and state
 Config config;
 CrawlerState crawlerState;
 
-// Function declarations
-Config readConfigFile();
-void initialize();
-void scheduleCrawlers();
-void startCrawler(string hostname, int currentDepth);
-void printCrawlingSummary(const SiteStats& stats, int depth);
+// Updated printCrawlingSummary function to match desired output format
+void printCrawlingSummary(const SiteStats& stats, int depth) {
+    stringstream ss;
+    ss << fixed << setprecision(3);
 
-int main() {
-    try {
-        SetConsoleOutputCP(CP_UTF8);  // Enable UTF-8 console output
+    // Basic site information
+    ss << "Website: " << stats.hostname << "\n"
+       << "Depth (distance from the starting pages): " << depth << "\n"
+       << "Number of Pages Discovered: " << stats.visitedPages.size() << "\n"
+       << "Number of Pages Failed to Discover: " << stats.numberOfPagesFailed << "\n"
+       << "Number of Linked Sites: " << (stats.linkedSites.getHead() ? 1 : 0) << "\n"
+       << "Min. Response Time: " << stats.minResponseTime << "ms\n"
+       << "Max. Response Time: " << stats.maxResponseTime << "ms\n"
+       << "Average Response Time: " << stats.averageResponseTime << "ms\n";
 
-        config = readConfigFile();
-        config.validate();            // Validate configuration
-        initialize();
-        scheduleCrawlers();
-
-        return 0;
+    // List of visited pages
+    if (!stats.visitedPages.empty()) {
+        ss << "List of visited pages:\n";
+        ss << "Response Time\tURL\n";
+        for (const auto& page : stats.visitedPages) {
+            ss << page.responseTime << "ms\t" << page.url << "\n";
+        }
     }
-    catch (const exception& e) {
-        cerr << "Fatal error: " << e.what() << endl;
-        return 1;
-    }
+
+    cout << ss.str();
 }
 
-// Reads and parses configuration from file
 Config readConfigFile() {
     ifstream cfFile("config.txt");
     if (!cfFile) {
@@ -135,7 +132,6 @@ Config readConfigFile() {
     return cf;
 }
 
-// Initializes crawler state with starting URLs
 void initialize() {
     Node* urlNode = config.startUrls.getHead();
     while (urlNode) {
@@ -146,39 +142,6 @@ void initialize() {
     }
 }
 
-// Manages crawler threads and scheduling
-void scheduleCrawlers() {
-    vector<thread> activeThreads;
-
-    while (true) {
-        unique_lock<mutex> lock(crawlerState.stateMutex);
-
-        // Exit if all crawling is complete
-        if (crawlerState.pendingSites.empty() && crawlerState.threadsCount == 0) {
-            break;
-        }
-
-        // Start new threads if possible
-        while (!crawlerState.pendingSites.empty() &&
-               crawlerState.threadsCount < config.maxThreads) {
-            string nextSite = crawlerState.pendingSites.front();
-            int depth = stoi(crawlerState.pendingSites.getHead()->metadata);
-            crawlerState.pendingSites.pop();
-
-            crawlerState.threadsCount++;
-            thread t(startCrawler, nextSite, depth);
-            t.detach();
-        }
-
-        // Wait for state changes
-        crawlerState.stateChanged.wait(lock, []{
-            return crawlerState.pendingSites.empty() ||
-                   crawlerState.threadsCount < config.maxThreads;
-        });
-    }
-}
-
-// Performs crawling of a single site
 void startCrawler(string hostname, int currentDepth) {
     ThreadGuard guard(crawlerState, crawlerState.stateMutex, crawlerState.stateChanged);
 
@@ -189,7 +152,6 @@ void startCrawler(string hostname, int currentDepth) {
         lock_guard<mutex> lock(crawlerState.stateMutex);
         printCrawlingSummary(stats, currentDepth);
 
-        // Process discovered sites
         if (currentDepth < config.depthLimit) {
             size_t linkedCount = 0;
             Node* site = stats.linkedSites.getHead();
@@ -213,20 +175,47 @@ void startCrawler(string hostname, int currentDepth) {
     }
 }
 
-// Formats and prints crawling statistics
-void printCrawlingSummary(const SiteStats& stats, int depth) {
-    stringstream ss;
-    ss << fixed << setprecision(2);
-    ss << "----------------------------------------------------------------------------\n"
-       << "Website: " << stats.hostname << "\n"
-       << "Depth: " << depth << "\n"
-       << "Pages Discovered: " << (stats.discoveredPages.getHead() ? 1 : 0) << "\n"
-       << "Pages Failed: " << stats.numberOfPagesFailed << "\n"
-       << "Linked Sites: " << (stats.linkedSites.getHead() ? 1 : 0) << "\n"
-       << "Response Times (ms) - "
-       << "Min: " << stats.minResponseTime << ", "
-       << "Max: " << stats.maxResponseTime << ", "
-       << "Avg: " << stats.averageResponseTime << "\n";
+void scheduleCrawlers() {
+    vector<thread> activeThreads;
 
-    cout << ss.str();
+    while (true) {
+        unique_lock<mutex> lock(crawlerState.stateMutex);
+
+        if (crawlerState.pendingSites.empty() && crawlerState.threadsCount == 0) {
+            break;
+        }
+
+        while (!crawlerState.pendingSites.empty() &&
+               crawlerState.threadsCount < config.maxThreads) {
+            string nextSite = crawlerState.pendingSites.front();
+            int depth = stoi(crawlerState.pendingSites.getHead()->metadata);
+            crawlerState.pendingSites.pop();
+
+            crawlerState.threadsCount++;
+            thread t(startCrawler, nextSite, depth);
+            t.detach();
+        }
+
+        crawlerState.stateChanged.wait(lock, []{
+            return crawlerState.pendingSites.empty() ||
+                   crawlerState.threadsCount < config.maxThreads;
+        });
+    }
+}
+
+int main() {
+    try {
+        SetConsoleOutputCP(CP_UTF8);
+
+        config = readConfigFile();
+        config.validate();
+        initialize();
+        scheduleCrawlers();
+
+        return 0;
+    }
+    catch (const exception& e) {
+        cerr << "Fatal error: " << e.what() << endl;
+        return 1;
+    }
 }
