@@ -1,0 +1,11 @@
+crawlDelay 500
+maxThreads 10
+depthLimit 6
+pagesLimit 10
+linkedSitesLimit 6
+startUrls 5
+http://www.giki.edu.pk
+http://www.todayonline.com
+http://www.fedex.com
+http://www.bbc.com
+http://www.lgs.edu.pk

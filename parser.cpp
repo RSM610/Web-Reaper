@@ -1,199 +1,167 @@
-//---------------------------------------------------------------------------
-// CPP Implementation File for all kinds of parsers i.e., URL parser, HTML parser, etc.
-//---------------------------------------------------------------------------
+/*
+ * ----------------------------------------------------------------------------
+ *  Parser Functions for Web Reaper
+ * ----------------------------------------------------------------------------
+ *  These functions handle URL extraction, verification, and string processing
+ *  for a web crawler. The main operations include:
+ *  - Extracting URLs from an HTML response.
+ *  - Validating URLs to ensure they are of the correct type and domain.
+ *  - Handling LinkedList operations for storing discovered URLs.
+ *
+ *  Optimizations include:
+ *  - Static string constants to reduce string creation
+ *  - Efficient string operations
+ *  - Improved memory management
+ * ----------------------------------------------------------------------------
+ */
 
 #include "parser.h"
-#include <iostream>
-#include <string>
 #include <map>
+#include <stdexcept>
+#include <array>
 
-using namespace std;
-
-// Node structure for linked list
-struct Node {
-    string hostname;
-    string path;
-    Node* next;
-
-    // Constructor
-    Node(string host, string p) : hostname(host), path(p), next(nullptr) {}
-};
-
-// LinkedList class implementation
-class LinkedList {
-private:
-    Node* head;
-
-public:
-    LinkedList() : head(nullptr) {}
-    ~LinkedList() {
-        clear();
+// LinkedList member function implementations
+void LinkedList::add(string url, string metadata) {
+    Node* newNode = new Node(url, metadata);
+    if (!head) {
+        head = tail = newNode;
+    } else {
+        tail->next = newNode;
+        tail = newNode;
     }
-
-    void add(string hostname, string path) {
-        Node* newNode = new Node(hostname, path);
-        if (!head) {
-            head = newNode;
-        } else {
-            Node* temp = head;
-            while (temp->next) {
-                temp = temp->next;
-            }
-            temp->next = newNode;
-        }
-    }
-
-    void clear() {
-        Node* current = head;
-        while (current) {
-            Node* nextNode = current->next;
-            delete current;
-            current = nextNode;
-        }
-        head = nullptr;
-    }
-
-    Node* getHead() const {
-        return head;
-    }
-};
-
-//---------------------------------------------------------------------------
-// Extract the Hostname from the URL
-//---------------------------------------------------------------------------
-string getHostnameFromUrl(string url) {
-    int offset = 0;
-    offset = offset == 0 && url.compare(0, 8, "https://") == 0 ? 8 : offset;
-    offset = offset == 0 && url.compare(0, 7, "http://") == 0 ? 7 : offset;
-
-    size_t pos = url.find("/", offset);
-    string domain = url.substr(offset, (pos == string::npos ? url.length() : pos) - offset);
-
-    return domain;
+    size_++;
 }
 
-//---------------------------------------------------------------------------
-// Extract the Host Path from the URL
-//---------------------------------------------------------------------------
-string getHostPathFromUrl(string url) {
-    int offset = 0;
-    offset = offset == 0 && url.compare(0, 8, "https://") == 0 ? 8 : offset;
-    offset = offset == 0 && url.compare(0, 7, "http://") == 0 ? 7 : offset;
+void LinkedList::clear() {
+    while (head) {
+        Node* temp = head;
+        head = head->next;
+        delete temp;
+    }
+    tail = nullptr;
+    size_ = 0;
+}
 
-    size_t pos = url.find("/", offset);
-    string path = pos == string::npos ? "/" : url.substr(pos);
+string LinkedList::front() const {
+    if (!head) throw runtime_error("List is empty");
+    return head->url;
+}
 
-    // Remove extra slashes
+void LinkedList::pop() {
+    if (!head) return;
+    Node* temp = head;
+    head = head->next;
+    if (!head) tail = nullptr;
+    delete temp;
+    size_--;
+}
+
+// URL Processing Functions
+string getHostnameFromUrl(const string& url) {
+    static const string https = "https://";
+    static const string http = "http://";
+
+    size_t offset = 0;
+    if (url.compare(0, https.length(), https) == 0)
+        offset = https.length();
+    else if (url.compare(0, http.length(), http) == 0)
+        offset = http.length();
+
+    size_t pos = url.find('/', offset);
+    return url.substr(offset, pos == string::npos ? string::npos : pos - offset);
+}
+
+string getHostPathFromUrl(const string& url) {
+    static const string https = "https://";
+    static const string http = "http://";
+
+    size_t offset = 0;
+    if (url.compare(0, https.length(), https) == 0)
+        offset = https.length();
+    else if (url.compare(0, http.length(), http) == 0)
+        offset = http.length();
+
+    size_t pos = url.find('/', offset);
+    if (pos == string::npos) return "/";
+
+    string path = url.substr(pos);
     pos = path.find_first_not_of('/');
-    if (pos == string::npos) path = "/";
-    else path.erase(0, pos - 1);
-
-    return path;
+    return pos == string::npos ? "/" : path.erase(0, pos - 1);
 }
 
-//---------------------------------------------------------------------------
-// Extract all the URLs in the given text (HTTP raw response). Return a LinkedList of <hostname, path>
-//---------------------------------------------------------------------------
-LinkedList extractUrls(string httpText) {
-    // Reformat, remove the special characters first.
+LinkedList extractUrls(const string& httpText) {
     string httpRaw = reformatHttpResponse(httpText);
-
-    // URL's possible starting, only consider href, http:// and https:// case.
-    const string urlStart[] = {"href=\"", "href = \"", "http://", "https://"};
-
-    // URL's possible ending, includes #, ? for not counting the hash & query.
-    const string urlEndChars = "\"#?, ";
-
-    // Variable for result.
+    static const array<string, 4> urlStart = {"href=\"", "href = \"", "http://", "https://"};
+    static const string urlEndChars = "\"#?, ";
     LinkedList extractedUrls;
 
-    for (auto startText : urlStart) {
-        // For each startText, try to find all URLs matches
-        while (true) {
-            // Find the starting point of first possible URL
-            int startPos = httpRaw.find(startText);
-            if (startPos == string::npos) break;
-            startPos += startText.length();
+    for (const auto& startText : urlStart) {
+        size_t pos = 0;
+        while ((pos = httpRaw.find(startText, pos)) != string::npos) {
+            pos += startText.length();
+            size_t endPos = httpRaw.find_first_of(urlEndChars, pos);
+            if (endPos == string::npos) break;
 
-            // Find the ending point of first possible URL
-            int endPos = httpRaw.find_first_of(urlEndChars, startPos);
-
-            // Extract the url
-            string url = httpRaw.substr(startPos, endPos - startPos);
-
-            // Verify and Add to the list
+            string url = httpRaw.substr(pos, endPos - pos);
             if (verifyUrl(url)) {
-                string urlDomain = getHostnameFromUrl(url);
-                extractedUrls.add(urlDomain, getHostPathFromUrl(url));
+                extractedUrls.add(getHostnameFromUrl(url), getHostPathFromUrl(url));
             }
-
-            // Remove the extracted from the http data
-            httpRaw.erase(0, endPos);
+            pos = endPos;
         }
     }
-
     return extractedUrls;
 }
 
-//---------------------------------------------------------------------------
-// To verify a URL, in case the fetched URL is wrong (in JS code, texts, etc.)
-// We ignore css, js, pdf files, etc; for saving time from sending meaningless requests.
-// We also allow only some domains, as of the location limitation.
-//---------------------------------------------------------------------------
-bool verifyUrl(string url) {
-    // Get domain
+bool verifyUrl(const string& url) {
+    if (url.empty()) return false;
     string urlDomain = getHostnameFromUrl(url);
-
-    // Verify domain. Case urlDomain="" -> page in the same host, checking domain is exempted.
-    if (urlDomain != "" && !verifyDomain(urlDomain)) return false;
-
-    // Verify file type
+    if (urlDomain.empty() || !verifyDomain(urlDomain)) return false;
     if (!verifyType(url)) return false;
-
-    // Verify special cases
-    if (url.find("mailto:") != string::npos) return false; // Case email-url, ignore it.
-
+    if (url.find("mailto:") != string::npos) return false;
     return true;
 }
 
-bool verifyType(string url) {
-    string forbiddenTypes[] = {".css", ".js", ".pdf", ".png", ".jpeg", ".jpg", ".ico"};
-    for (auto type : forbiddenTypes)
-        if (url.find(type) != string::npos) return false; // Case special file types.
+bool verifyType(const string& url) {
+    static const array<string, 7> forbiddenTypes = {
+        ".css", ".js", ".pdf", ".png", ".jpeg", ".jpg", ".ico"
+    };
+
+    for (const auto& type : forbiddenTypes)
+        if (url.find(type) != string::npos) return false;
     return true;
 }
 
-bool verifyDomain(string url) {
-    string allowedDomains[] = {".com", ".sg", ".net", ".co", ".org", ".me"};
-    bool flag = true;
-    for (auto type : allowedDomains)
-        if (hasSuffix(url, type)) { // Check if contain allowed domain as the suffix
-            flag = false;
-            break;
-        }
-    return !flag;
+bool verifyDomain(const string& url) {
+    static const array<string, 7> allowedDomains = {
+        ".com", ".pk", ".edu", ".net", ".co", ".org", ".me"
+    };
+
+    for (const auto& domain : allowedDomains)
+        if (hasSuffix(url, domain)) return true;
+    return false;
 }
 
-//---------------------------------------------------------------------------
-// Util function, to check if a string ends with some specific suffix.
-//---------------------------------------------------------------------------
-bool hasSuffix(string str, string suffix) {
-    return str.size() >= suffix.size() && str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+bool hasSuffix(const string& str, const string& suffix) {
+    return str.size() >= suffix.size() &&
+           str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-//---------------------------------------------------------------------------
-// As the raw HTTP response contains a lot of special character \0 \1 \t etc.
-// This function is to reformat the data, only allow a specific set of characters.
-//---------------------------------------------------------------------------
-string reformatHttpResponse(string text) {
-    string allowedChrs = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01233456789.,/\":#?+-_= ";
-    map<char, char> mm;
-    for (char ch : allowedChrs) mm[ch] = ch;
-    mm['\n'] = ' ';
+string reformatHttpResponse(const string& text) {
+    static const string allowedChrs = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,/\":#?+-_= ";
+    static const map<char, char> charMap = []() {
+        map<char, char> m;
+        for (char ch : allowedChrs) m[ch] = ch;
+        m['\n'] = ' ';
+        return m;
+    }();
 
-    string res = "";
+    string result;
+    result.reserve(text.length());
     for (char ch : text) {
-        if (mm[ch]) res += tolower(mm[ch]);
+        auto it = charMap.find(ch);
+        if (it != charMap.end()) {
+            result += tolower(it->second);
+        }
     }
-    return res;
+    return result;
 }
